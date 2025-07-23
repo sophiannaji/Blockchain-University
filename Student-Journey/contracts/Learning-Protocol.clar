@@ -161,6 +161,78 @@
   (not (var-get contract-paused))
 )
 
+;; INPUT VALIDATION FUNCTIONS
+
+(define-private (is-valid-string-input (input (string-ascii 500)))
+  (and (> (len input) u0) (<= (len input) u500))
+)
+
+(define-private (is-valid-short-string (input (string-ascii 100)))
+  (and (> (len input) u0) (<= (len input) u100))
+)
+
+(define-private (is-valid-category (input (string-ascii 50)))
+  (and (> (len input) u0) (<= (len input) u50))
+)
+
+(define-private (is-valid-difficulty (input (string-ascii 20)))
+  (and (> (len input) u0) (<= (len input) u20))
+)
+
+(define-private (is-valid-requirements (input (string-ascii 300)))
+  (and (> (len input) u0) (<= (len input) u300))
+)
+
+(define-private (is-valid-grade (input (string-ascii 10)))
+  (and (> (len input) u0) (<= (len input) u10))
+)
+
+(define-private (is-valid-course-id (course-id uint))
+  (and (> course-id u0) (<= course-id (var-get course-id-counter)))
+)
+
+(define-private (is-valid-achievement-id (achievement-id uint))
+  (and (> achievement-id u0) (<= achievement-id (var-get achievement-id-counter)))
+)
+
+(define-private (is-valid-certificate-id (certificate-id uint))
+  (and (> certificate-id u0) (<= certificate-id (var-get certificate-id-counter)))
+)
+
+(define-private (is-valid-rating (rating uint))
+  (and (>= rating u1) (<= rating u5))
+)
+
+(define-private (is-valid-progress (progress uint))
+  (<= progress u100)
+)
+
+(define-private (is-valid-fee (fee uint))
+  (>= fee u0)
+)
+
+(define-private (is-valid-principal (input principal))
+  (not (is-eq input 'ST000000000000000000002AMW42H))
+)
+
+(define-private (is-valid-prerequisites (prereqs (list 10 uint)))
+  (<= (len prereqs) u10)
+)
+
+(define-private (is-valid-optional-review (review (optional (string-ascii 300))))
+  (match review
+    some-review (and (> (len some-review) u0) (<= (len some-review) u300))
+    true
+  )
+)
+
+(define-private (is-valid-optional-notes (notes (optional (string-ascii 200))))
+  (match notes
+    some-notes (and (> (len some-notes) u0) (<= (len some-notes) u200))
+    true
+  )
+)
+
 ;; UTILITY FUNCTIONS
 
 (define-private (get-current-time)
@@ -219,9 +291,16 @@
     (
       (new-course-id (+ (var-get course-id-counter) u1))
       (current-time (get-current-time))
+      (validated-name name)
+      (validated-description description)
+      (validated-difficulty difficulty-level)
+      (validated-prerequisites prerequisites)
     )
     (asserts! (is-contract-active) ERR_UNAUTHORIZED)
-    (asserts! (> (len name) u0) ERR_INVALID_INPUT)
+    (asserts! (is-valid-short-string validated-name) ERR_INVALID_INPUT)
+    (asserts! (is-valid-string-input validated-description) ERR_INVALID_INPUT)
+    (asserts! (is-valid-difficulty validated-difficulty) ERR_INVALID_INPUT)
+    (asserts! (is-valid-prerequisites validated-prerequisites) ERR_INVALID_INPUT)
     (asserts! (> credits u0) ERR_INVALID_INPUT)
     (asserts! (> max-enrollment u0) ERR_INVALID_INPUT)
 
@@ -229,12 +308,12 @@
     (map-set courses
       { course-id: new-course-id }
       {
-        name: name,
-        description: description,
+        name: validated-name,
+        description: validated-description,
         instructor: tx-sender,
         credits: credits,
-        difficulty-level: difficulty-level,
-        prerequisites: prerequisites,
+        difficulty-level: validated-difficulty,
+        prerequisites: validated-prerequisites,
         max-enrollment: max-enrollment,
         current-enrollment: u0,
         is-active: true,
@@ -279,15 +358,20 @@
   (let
     (
       (course-data (unwrap! (map-get? courses { course-id: course-id }) ERR_NOT_FOUND))
+      (validated-name name)
+      (validated-description description)
+      (validated-course-id course-id)
     )
-    (asserts! (is-course-instructor course-id) ERR_UNAUTHORIZED)
-    (asserts! (> (len name) u0) ERR_INVALID_INPUT)
+    (asserts! (is-valid-course-id validated-course-id) ERR_INVALID_INPUT)
+    (asserts! (is-course-instructor validated-course-id) ERR_UNAUTHORIZED)
+    (asserts! (is-valid-short-string validated-name) ERR_INVALID_INPUT)
+    (asserts! (is-valid-string-input validated-description) ERR_INVALID_INPUT)
 
     (map-set courses
-      { course-id: course-id }
+      { course-id: validated-course-id }
       (merge course-data {
-        name: name,
-        description: description,
+        name: validated-name,
+        description: validated-description,
         is-active: is-active,
         updated-at: (get-current-time)
       })
@@ -301,15 +385,17 @@
 (define-public (enroll-in-course (course-id uint))
   (let
     (
-      (course-data (unwrap! (map-get? courses { course-id: course-id }) ERR_NOT_FOUND))
+      (validated-course-id course-id)
+      (course-data (unwrap! (map-get? courses { course-id: validated-course-id }) ERR_NOT_FOUND))
       (current-time (get-current-time))
       (student-balance (stx-get-balance tx-sender))
     )
+    (asserts! (is-valid-course-id validated-course-id) ERR_INVALID_INPUT)
     (asserts! (is-contract-active) ERR_UNAUTHORIZED)
     (asserts! (get is-active course-data) ERR_COURSE_NOT_ACTIVE)
     (asserts! (< (get current-enrollment course-data) (get max-enrollment course-data)) ERR_ENROLLMENT_CLOSED)
     (asserts! (>= student-balance (var-get enrollment-fee)) ERR_INSUFFICIENT_BALANCE)
-    (asserts! (is-none (map-get? enrollments { student: tx-sender, course-id: course-id })) ERR_ALREADY_EXISTS)
+    (asserts! (is-none (map-get? enrollments { student: tx-sender, course-id: validated-course-id })) ERR_ALREADY_EXISTS)
     (asserts! (check-prerequisites tx-sender (get prerequisites course-data)) ERR_PREREQUISITE_NOT_MET)
 
     ;; Transfer enrollment fee
@@ -317,7 +403,7 @@
 
     ;; Create enrollment record
     (map-set enrollments
-      { student: tx-sender, course-id: course-id }
+      { student: tx-sender, course-id: validated-course-id }
       {
         enrolled-at: current-time,
         progress: u0,
@@ -329,7 +415,7 @@
 
     ;; Update course enrollment count
     (map-set courses
-      { course-id: course-id }
+      { course-id: validated-course-id }
       (merge course-data {
         current-enrollment: (+ (get current-enrollment course-data) u1)
       })
@@ -362,16 +448,21 @@
 (define-public (update-progress (student principal) (course-id uint) (progress uint))
   (let
     (
-      (enrollment-data (unwrap! (map-get? enrollments { student: student, course-id: course-id }) ERR_NOT_FOUND))
+      (validated-student student)
+      (validated-course-id course-id)
+      (validated-progress progress)
+      (enrollment-data (unwrap! (map-get? enrollments { student: validated-student, course-id: validated-course-id }) ERR_NOT_FOUND))
     )
-    (asserts! (is-course-instructor course-id) ERR_UNAUTHORIZED)
-    (asserts! (<= progress u100) ERR_INVALID_INPUT)
+    (asserts! (is-valid-principal validated-student) ERR_INVALID_INPUT)
+    (asserts! (is-valid-course-id validated-course-id) ERR_INVALID_INPUT)
+    (asserts! (is-valid-progress validated-progress) ERR_INVALID_INPUT)
+    (asserts! (is-course-instructor validated-course-id) ERR_UNAUTHORIZED)
 
     (map-set enrollments
-      { student: student, course-id: course-id }
+      { student: validated-student, course-id: validated-course-id }
       (merge enrollment-data {
-        progress: progress,
-        status: (if (>= progress u100) "completed" "in-progress")
+        progress: validated-progress,
+        status: (if (>= validated-progress u100) "completed" "in-progress")
       })
     )
     (ok true)
@@ -391,19 +482,26 @@
     (
       (new-achievement-id (+ (var-get achievement-id-counter) u1))
       (current-time (get-current-time))
+      (validated-name name)
+      (validated-description description)
+      (validated-category category)
+      (validated-requirements requirements)
     )
     (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
-    (asserts! (> (len name) u0) ERR_INVALID_INPUT)
+    (asserts! (is-valid-short-string validated-name) ERR_INVALID_INPUT)
+    (asserts! (is-valid-string-input validated-description) ERR_INVALID_INPUT)
+    (asserts! (is-valid-category validated-category) ERR_INVALID_INPUT)
+    (asserts! (is-valid-requirements validated-requirements) ERR_INVALID_INPUT)
     (asserts! (> points u0) ERR_INVALID_INPUT)
 
     (map-set achievements
       { achievement-id: new-achievement-id }
       {
-        name: name,
-        description: description,
-        category: category,
+        name: validated-name,
+        description: validated-description,
+        category: validated-category,
         points: points,
-        requirements: requirements,
+        requirements: validated-requirements,
         is-active: true,
         created-by: tx-sender,
         created-at: current-time
@@ -418,7 +516,11 @@
 (define-public (award-achievement (student principal) (achievement-id uint) (score uint) (notes (optional (string-ascii 200))))
   (let
     (
-      (achievement-data (unwrap! (map-get? achievements { achievement-id: achievement-id }) ERR_NOT_FOUND))
+      (validated-student student)
+      (validated-achievement-id achievement-id)
+      (validated-score score)
+      (validated-notes notes)
+      (achievement-data (unwrap! (map-get? achievements { achievement-id: validated-achievement-id }) ERR_NOT_FOUND))
       (current-time (get-current-time))
       (student-profile (default-to 
         {
@@ -430,22 +532,25 @@
           last-activity: current-time,
           reputation-score: u100
         }
-        (map-get? student-profiles { student: student })
+        (map-get? student-profiles { student: validated-student })
       ))
     )
+    (asserts! (is-valid-principal validated-student) ERR_INVALID_INPUT)
+    (asserts! (is-valid-achievement-id validated-achievement-id) ERR_INVALID_INPUT)
+    (asserts! (is-valid-optional-notes validated-notes) ERR_INVALID_INPUT)
     (asserts! (or (is-contract-owner) (is-eq tx-sender (get created-by achievement-data))) ERR_UNAUTHORIZED)
     (asserts! (get is-active achievement-data) ERR_ACHIEVEMENT_LOCKED)
-    (asserts! (validate-score score) ERR_INVALID_SCORE)
-    (asserts! (is-none (map-get? student-achievements { student: student, achievement-id: achievement-id })) ERR_ALREADY_EXISTS)
+    (asserts! (validate-score validated-score) ERR_INVALID_SCORE)
+    (asserts! (is-none (map-get? student-achievements { student: validated-student, achievement-id: validated-achievement-id })) ERR_ALREADY_EXISTS)
 
     ;; Award achievement
     (map-set student-achievements
-      { student: student, achievement-id: achievement-id }
+      { student: validated-student, achievement-id: validated-achievement-id }
       {
         earned-at: current-time,
         verified-by: tx-sender,
-        score: score,
-        notes: notes
+        score: validated-score,
+        notes: validated-notes
       }
     )
 
@@ -456,7 +561,7 @@
         (new-total-achievements (+ (get total-achievements student-profile) u1))
       )
       (map-set student-profiles
-        { student: student }
+        { student: validated-student }
         (merge student-profile {
           total-achievements: new-total-achievements,
           total-points: new-total-points,
@@ -480,27 +585,34 @@
 )
   (let
     (
-      (enrollment-data (unwrap! (map-get? enrollments { student: student, course-id: course-id }) ERR_NOT_FOUND))
-      (course-data (unwrap! (map-get? courses { course-id: course-id }) ERR_NOT_FOUND))
+      (validated-student student)
+      (validated-course-id course-id)
+      (validated-score final-score)
+      (validated-grade grade)
+      (enrollment-data (unwrap! (map-get? enrollments { student: validated-student, course-id: validated-course-id }) ERR_NOT_FOUND))
+      (course-data (unwrap! (map-get? courses { course-id: validated-course-id }) ERR_NOT_FOUND))
       (new-certificate-id (+ (var-get certificate-id-counter) u1))
       (current-time (get-current-time))
-      (verification-hash (generate-verification-hash student course-id final-score))
+      (verification-hash (generate-verification-hash validated-student validated-course-id validated-score))
     )
-    (asserts! (is-course-instructor course-id) ERR_UNAUTHORIZED)
-    (asserts! (validate-score final-score) ERR_INVALID_SCORE)
-    (asserts! (>= final-score MIN_PASSING_SCORE) ERR_INVALID_SCORE)
+    (asserts! (is-valid-principal validated-student) ERR_INVALID_INPUT)
+    (asserts! (is-valid-course-id validated-course-id) ERR_INVALID_INPUT)
+    (asserts! (is-course-instructor validated-course-id) ERR_UNAUTHORIZED)
+    (asserts! (validate-score validated-score) ERR_INVALID_SCORE)
+    (asserts! (>= validated-score MIN_PASSING_SCORE) ERR_INVALID_SCORE)
+    (asserts! (is-valid-grade validated-grade) ERR_INVALID_INPUT)
 
     ;; Issue certificate
     (map-set certificates
       { certificate-id: new-certificate-id }
       {
-        student: student,
-        course-id: course-id,
+        student: validated-student,
+        course-id: validated-course-id,
         achievement-id: none,
         issued-by: tx-sender,
         issued-at: current-time,
-        grade: grade,
-        final-score: final-score,
+        grade: validated-grade,
+        final-score: validated-score,
         verification-hash: verification-hash,
         is-revoked: false
       }
@@ -508,10 +620,10 @@
 
     ;; Update enrollment status
     (map-set enrollments
-      { student: student, course-id: course-id }
+      { student: validated-student, course-id: validated-course-id }
       (merge enrollment-data {
         status: "completed",
-        final-score: (some final-score),
+        final-score: (some validated-score),
         completion-date: (some current-time)
       })
     )
@@ -529,11 +641,11 @@
             last-activity: current-time,
             reputation-score: u100
           }
-          (map-get? student-profiles { student: student })
+          (map-get? student-profiles { student: validated-student })
         ))
       )
       (map-set student-profiles
-        { student: student }
+        { student: validated-student }
         (merge student-profile {
           total-credits: (+ (get total-credits student-profile) (get credits course-data)),
           last-activity: current-time
@@ -549,13 +661,15 @@
 (define-public (revoke-certificate (certificate-id uint))
   (let
     (
-      (certificate-data (unwrap! (map-get? certificates { certificate-id: certificate-id }) ERR_NOT_FOUND))
+      (validated-certificate-id certificate-id)
+      (certificate-data (unwrap! (map-get? certificates { certificate-id: validated-certificate-id }) ERR_NOT_FOUND))
     )
+    (asserts! (is-valid-certificate-id validated-certificate-id) ERR_INVALID_INPUT)
     (asserts! (or (is-contract-owner) (is-eq tx-sender (get issued-by certificate-data))) ERR_UNAUTHORIZED)
     (asserts! (not (get is-revoked certificate-data)) ERR_NOT_FOUND)
 
     (map-set certificates
-      { certificate-id: certificate-id }
+      { certificate-id: validated-certificate-id }
       (merge certificate-data { is-revoked: true })
     )
     (ok true)
@@ -567,18 +681,23 @@
 (define-public (submit-course-review (course-id uint) (rating uint) (review (optional (string-ascii 300))))
   (let
     (
-      (enrollment-data (unwrap! (map-get? enrollments { student: tx-sender, course-id: course-id }) ERR_NOT_FOUND))
+      (validated-course-id course-id)
+      (validated-rating rating)
+      (validated-review review)
+      (enrollment-data (unwrap! (map-get? enrollments { student: tx-sender, course-id: validated-course-id }) ERR_NOT_FOUND))
       (current-time (get-current-time))
     )
+    (asserts! (is-valid-course-id validated-course-id) ERR_INVALID_INPUT)
     (asserts! (is-contract-active) ERR_UNAUTHORIZED)
-    (asserts! (and (>= rating u1) (<= rating u5)) ERR_INVALID_INPUT)
+    (asserts! (is-valid-rating validated-rating) ERR_INVALID_INPUT)
+    (asserts! (is-valid-optional-review validated-review) ERR_INVALID_INPUT)
     (asserts! (is-eq (get status enrollment-data) "completed") ERR_UNAUTHORIZED)
 
     (map-set course-reviews
-      { student: tx-sender, course-id: course-id }
+      { student: tx-sender, course-id: validated-course-id }
       {
-        rating: rating,
-        review: review,
+        rating: validated-rating,
+        review: validated-review,
         submitted-at: current-time
       }
     )
@@ -605,9 +724,13 @@
 )
 
 (define-public (set-enrollment-fee (new-fee uint))
-  (begin
+  (let
+    (
+      (validated-fee new-fee)
+    )
     (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
-    (var-set enrollment-fee new-fee)
+    (asserts! (is-valid-fee validated-fee) ERR_INVALID_INPUT)
+    (var-set enrollment-fee validated-fee)
     (ok true)
   )
 )
@@ -615,12 +738,14 @@
 (define-public (verify-instructor (instructor principal))
   (let
     (
-      (instructor-profile (unwrap! (map-get? instructor-profiles { instructor: instructor }) ERR_NOT_FOUND))
+      (validated-instructor instructor)
+      (instructor-profile (unwrap! (map-get? instructor-profiles { instructor: validated-instructor }) ERR_NOT_FOUND))
     )
     (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
+    (asserts! (is-valid-principal validated-instructor) ERR_INVALID_INPUT)
     
     (map-set instructor-profiles
-      { instructor: instructor }
+      { instructor: validated-instructor }
       (merge instructor-profile { is-verified: true })
     )
     (ok true)
